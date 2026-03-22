@@ -146,6 +146,14 @@ install_deps() {
     apt-get update -qq
     apt-get install -y -qq python3 python3-pip python3-venv > /dev/null
 
+    # SDL2 dev libs for HUD overlay (optional, fallback to text if unavailable)
+    apt-get install -y -qq libsdl2-2.0-0 > /dev/null 2>&1 || \
+        warn "SDL2 not available -- HUD overlay will use text fallback"
+
+    # Audio tools for notification sounds (optional)
+    apt-get install -y -qq alsa-utils > /dev/null 2>&1 || \
+        warn "alsa-utils not available -- sound notifications disabled"
+
     # Check Python version (need 3.9+)
     local pyver
     pyver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
@@ -182,6 +190,11 @@ install_files() {
     cp "$script_dir/proof_of_play.py" "$INSTALL_DIR/"
     cp "$script_dir/cartridge_wallet.py" "$INSTALL_DIR/"
     cp "$script_dir/community_events.py" "$INSTALL_DIR/"
+    cp "$script_dir/hud_overlay.py" "$INSTALL_DIR/"
+    cp "$script_dir/leaderboard.py" "$INSTALL_DIR/"
+    cp "$script_dir/controller_detect.py" "$INSTALL_DIR/"
+    cp "$script_dir/daily_digest.py" "$INSTALL_DIR/"
+    cp "$script_dir/game_recommender.py" "$INSTALL_DIR/"
     cp "$script_dir/config.json" "$INSTALL_DIR/"
 
     chmod +x "$INSTALL_DIR/rustchain_miner.py"
@@ -189,12 +202,25 @@ install_files() {
     chmod +x "$INSTALL_DIR/proof_of_play.py"
     chmod +x "$INSTALL_DIR/cartridge_wallet.py"
     chmod +x "$INSTALL_DIR/community_events.py"
+    chmod +x "$INSTALL_DIR/hud_overlay.py"
+    chmod +x "$INSTALL_DIR/leaderboard.py"
+    chmod +x "$INSTALL_DIR/controller_detect.py"
+    chmod +x "$INSTALL_DIR/daily_digest.py"
+    chmod +x "$INSTALL_DIR/game_recommender.py"
+
+    # Copy sounds directory
+    mkdir -p "$INSTALL_DIR/sounds"
+    if [[ -d "$script_dir/sounds" ]]; then
+        cp -r "$script_dir/sounds/"* "$INSTALL_DIR/sounds/" 2>/dev/null || true
+        info "Sounds directory installed"
+    fi
 
     # State directory structure
     mkdir -p "$STATE_DIR"
     mkdir -p "$STATE_DIR/sessions"
     mkdir -p "$STATE_DIR/cartridges"
     mkdir -p "$STATE_DIR/events"
+    mkdir -p "$STATE_DIR/digests"
 
     info "Files installed"
 }
@@ -325,19 +351,72 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
+    # HUD overlay service
+    cat > /etc/systemd/system/sophia-hud.service <<EOF
+[Unit]
+Description=Sophia Edge Node - Achievement HUD Overlay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=$INSTALL_DIR/env
+ExecStart=$INSTALL_DIR/venv/bin/python3 $INSTALL_DIR/hud_overlay.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Daily digest timer and service
+    cat > /etc/systemd/system/sophia-digest.service <<EOF
+[Unit]
+Description=Sophia Edge Node - Daily Gaming Digest
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=$INSTALL_DIR/env
+ExecStart=$INSTALL_DIR/venv/bin/python3 $INSTALL_DIR/daily_digest.py --quiet --save-card --post-discord
+StandardOutput=journal
+StandardError=journal
+EOF
+
+    cat > /etc/systemd/system/sophia-digest.timer <<EOF
+[Unit]
+Description=Sophia Edge Node - Daily Digest Timer (midnight UTC)
+
+[Timer]
+OnCalendar=*-*-* 00:05:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
     systemctl daemon-reload
     systemctl enable sophia-miner.service
 
-    # Only enable achievements + proof-of-play if RetroAchievements configured
+    # Only enable achievements + proof-of-play + HUD if RetroAchievements configured
     if python3 -c "import json; c=json.load(open('$INSTALL_DIR/config.json')); exit(0 if c.get('achievements',{}).get('enabled') else 1)" 2>/dev/null; then
         systemctl enable sophia-achievements.service
         systemctl enable sophia-proof-of-play.service
+        systemctl enable sophia-hud.service
         info "Achievement bridge enabled"
         info "Proof of Play tracker enabled"
+        info "HUD overlay enabled"
     else
         info "Achievement bridge disabled (no RetroAchievements credentials)"
         info "Proof of Play tracker disabled (requires RetroAchievements)"
+        info "HUD overlay disabled (requires RetroAchievements)"
     fi
+
+    # Always enable daily digest timer
+    systemctl enable sophia-digest.timer
+    info "Daily digest timer enabled (midnight UTC)"
 
     info "Systemd services installed"
 }
@@ -364,11 +443,21 @@ start_services() {
             systemctl start sophia-proof-of-play.service
             info "Proof of Play tracker started"
         fi
+
+        if systemctl is-enabled sophia-hud.service &>/dev/null; then
+            systemctl start sophia-hud.service
+            info "HUD overlay started"
+        fi
+
+        systemctl start sophia-digest.timer
+        info "Daily digest timer started"
     else
         info "Services installed but not started. Use:"
         info "  sudo systemctl start sophia-miner"
         info "  sudo systemctl start sophia-achievements"
         info "  sudo systemctl start sophia-proof-of-play"
+        info "  sudo systemctl start sophia-hud"
+        info "  sudo systemctl start sophia-digest.timer"
     fi
 }
 
@@ -392,6 +481,8 @@ show_summary() {
     echo "    sudo systemctl status sophia-miner"
     echo "    sudo systemctl status sophia-achievements"
     echo "    sudo systemctl status sophia-proof-of-play"
+    echo "    sudo systemctl status sophia-hud"
+    echo "    sudo systemctl list-timers sophia-digest"
     echo "    sudo journalctl -u sophia-miner -f"
     echo "    sudo journalctl -u sophia-achievements -f"
     echo "    sudo journalctl -u sophia-proof-of-play -f"
@@ -399,6 +490,11 @@ show_summary() {
     echo "  View your collection:"
     echo "    python3 $INSTALL_DIR/cartridge_wallet.py --list"
     echo "    python3 $INSTALL_DIR/community_events.py --events"
+    echo "    python3 $INSTALL_DIR/leaderboard.py --local"
+    echo "    python3 $INSTALL_DIR/leaderboard.py --network"
+    echo "    python3 $INSTALL_DIR/controller_detect.py"
+    echo "    python3 $INSTALL_DIR/daily_digest.py --today"
+    echo "    python3 $INSTALL_DIR/game_recommender.py --platform snes"
     echo ""
     echo "  RustChain:    https://rustchain.org"
     echo "  BoTTube:      https://bottube.ai"

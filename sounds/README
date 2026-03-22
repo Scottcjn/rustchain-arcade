@@ -1,0 +1,24 @@
+Sophia Edge Node -- Sound Effects
+==================================
+
+Place .wav sound files here for HUD overlay notifications.
+
+Expected files:
+  achievement_unlock.wav  -- Short chime for regular achievement unlocks
+  mastery.wav             -- Longer fanfare for mastery/legendary achievements
+  daily_summary.wav       -- Brief tone for daily digest notification
+
+Format requirements:
+  - WAV format (PCM, uncompressed)
+  - 16-bit, mono or stereo
+  - 22050 Hz or 44100 Hz sample rate
+  - Keep files short (under 3 seconds for achievement, under 5 for mastery)
+  - Small file size preferred (RPi storage is limited)
+
+The HUD overlay will attempt playback via aplay (ALSA), paplay (PulseAudio),
+or mpv in that order. If no audio player is available, notifications are
+silent (text-only).
+
+Installation:
+  The install.sh script copies this directory to /opt/sophia-edge-node/sounds/
+  on the target Raspberry Pi.
