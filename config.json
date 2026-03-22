@@ -29,6 +29,62 @@
     },
     "hardcore_multiplier": 2.0
   },
+  "proof_of_play": {
+    "enabled": true,
+    "session_boost_multipliers": {
+      "15min": 1.5,
+      "30min_with_achievement": 2.0,
+      "60min": 3.0,
+      "mastery_victory_lap": 5.0
+    },
+    "heartbeat_interval_seconds": 60,
+    "retroarch_process_names": ["retroarch", "retroarch-core", "ra32", "ra64"]
+  },
+  "retro_treasury": {
+    "network_daily_cap": 3.0,
+    "wallet_daily_cap": 0.10
+  },
+  "rarity_factors": {
+    "common_above_50pct": 1.0,
+    "uncommon_20_50pct": 1.25,
+    "rare_5_20pct": 1.75,
+    "ultra_rare_1_5pct": 2.5,
+    "legendary_below_1pct": 3.0
+  },
+  "mastery_milestones": {
+    "first_clear": 0.002,
+    "full_mastery": 0.02,
+    "legendary_mastery": 0.05,
+    "system_crown_5_games": 0.03
+  },
+  "authenticity_multipliers": {
+    "crt_output": 1.12,
+    "original_controller": 1.08,
+    "both": 1.10,
+    "max_cap": 1.35
+  },
+  "community_events": {
+    "saturday_morning_quests": {
+      "enabled": true,
+      "bonus_multiplier": 1.05
+    },
+    "cabinet_hunts": {
+      "enabled": true
+    },
+    "arcade_seasons": {
+      "enabled": true,
+      "quarter_length_days": 90
+    },
+    "one_credit_club": {
+      "enabled": true
+    }
+  },
+  "anti_cheat": {
+    "hardcore_only": true,
+    "max_achievements_per_hour": 20,
+    "session_heartbeat_interval": 60,
+    "common_uncommon_daily_throttle": 8
+  },
   "discord": {
     "enabled": false,
     "webhook_url": ""

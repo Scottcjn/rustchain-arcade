@@ -7,6 +7,9 @@ and submits attestation to the RustChain network on a configurable interval.
 
 ARM devices earn 0.0005x weight (server-enforced). This is honest reporting --
 real hardware, real attestation, real (tiny) rewards.
+
+Proof of Play integration: if a gaming session is active, includes session
+data in attestation for boosted mining weight (up to 5.0x during victory lap).
 """
 
 import asyncio
@@ -314,6 +317,30 @@ def get_wallet_id(config: Dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Proof of Play integration
+# ---------------------------------------------------------------------------
+
+def _read_proof_of_play_session() -> Optional[Dict]:
+    """Read current proof_of_play session state from the PoP daemon.
+
+    The proof_of_play.py daemon writes session state to
+    ~/.sophia-edge/sessions/current_session.json which we read here.
+    Returns session dict if active, None otherwise.
+    """
+    session_file = STATE_DIR / "sessions" / "current_session.json"
+    if not session_file.exists():
+        return None
+
+    try:
+        data = json.loads(session_file.read_text())
+        if data.get("active", False):
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Attestation submission
 # ---------------------------------------------------------------------------
 
@@ -331,6 +358,11 @@ async def submit_attestation(
     nonce = hashlib.sha256(
         f"{miner_id}:{time.time()}:{random.random()}".encode()
     ).hexdigest()[:32]
+
+    # Read proof_of_play session data if available
+    proof_of_play = _read_proof_of_play_session()
+    session_boost = proof_of_play.get("boost_multiplier", 1.0) if proof_of_play else 1.0
+    heartbeat_count = proof_of_play.get("heartbeat_count", 0) if proof_of_play else 0
 
     attestation = {
         "miner": wallet_id,
@@ -350,6 +382,14 @@ async def submit_attestation(
             "macs": macs,
         },
         "fingerprint": fingerprint,
+        "proof_of_play": {
+            "active": proof_of_play is not None and proof_of_play.get("active", False),
+            "session_boost_multiplier": session_boost,
+            "heartbeat_count": heartbeat_count,
+            "session_id": proof_of_play.get("session_id", "") if proof_of_play else "",
+            "duration_minutes": proof_of_play.get("duration_minutes", 0) if proof_of_play else 0,
+            "achievements_earned": proof_of_play.get("achievements_earned", 0) if proof_of_play else 0,
+        },
     }
 
     node_url = config["rustchain"]["node_url"].rstrip("/")
@@ -386,7 +426,7 @@ async def mining_loop(config: Dict) -> None:
 
     cpuinfo = read_cpuinfo()
     cpu_model, cpu_brand = detect_rpi_model(cpuinfo)
-    log.info("=== Sophia Edge Miner ===")
+    log.info("=== Sophia Edge Miner v2.0 ===")
     log.info("Node ID   : %s", node_id)
     log.info("Wallet    : %s", get_wallet_id(config))
     log.info("Miner ID  : %s", load_or_create_miner_id())
@@ -394,10 +434,21 @@ async def mining_loop(config: Dict) -> None:
     log.info("Arch      : %s", platform.machine())
     log.info("Interval  : %ds", interval)
     log.info("Node URL  : %s", config["rustchain"]["node_url"])
+    log.info("Base ARM weight: 0.0005x (boosted up to 5x during active play)")
 
     async with aiohttp.ClientSession() as session:
         while True:
             fingerprint = run_fingerprint_checks()
+
+            # Check for active gaming session
+            pop_session = _read_proof_of_play_session()
+            if pop_session and pop_session.get("active"):
+                boost = pop_session.get("boost_multiplier", 1.0)
+                log.info("Gaming session active: boost=%.1fx, heartbeats=%d, ach=%d",
+                         boost,
+                         pop_session.get("heartbeat_count", 0),
+                         pop_session.get("achievements_earned", 0))
+
             ok = await submit_attestation(session, config, fingerprint)
             if ok:
                 log.info("Next attestation in %ds", interval)

@@ -44,6 +44,100 @@ detect_hardware() {
 }
 
 # ---------------------------------------------------------------------------
+# RetroArch / RetroPie detection
+# ---------------------------------------------------------------------------
+
+detect_retroarch() {
+    info "Checking for RetroArch / RetroPie..."
+
+    local found_retroarch=false
+
+    # Check for RetroArch binary
+    if command -v retroarch &>/dev/null; then
+        local ra_version
+        ra_version=$(retroarch --version 2>&1 | head -1 || echo "unknown version")
+        info "RetroArch found: $ra_version"
+        found_retroarch=true
+    fi
+
+    # Check for RetroPie installation
+    if [[ -d "/opt/retropie" ]]; then
+        info "RetroPie installation detected at /opt/retropie"
+        found_retroarch=true
+    fi
+
+    # Check for flatpak RetroArch
+    if flatpak list 2>/dev/null | grep -qi retroarch; then
+        info "RetroArch (Flatpak) detected"
+        found_retroarch=true
+    fi
+
+    # Check for snap RetroArch
+    if snap list 2>/dev/null | grep -qi retroarch; then
+        info "RetroArch (Snap) detected"
+        found_retroarch=true
+    fi
+
+    if [[ "$found_retroarch" == "false" ]]; then
+        warn "RetroArch not found. Proof of Play features require RetroArch."
+        warn "Install: sudo apt install retroarch  (or set up RetroPie)"
+        warn "Mining will still work without it."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Controller detection
+# ---------------------------------------------------------------------------
+
+detect_controllers() {
+    info "Checking for connected controllers..."
+    local count=0
+
+    # Check /dev/input/js* joystick devices
+    for js in /dev/input/js*; do
+        if [[ -e "$js" ]]; then
+            local js_num="${js##/dev/input/js}"
+            local name_path="/sys/class/input/js${js_num}/device/name"
+            if [[ -r "$name_path" ]]; then
+                local name
+                name=$(cat "$name_path")
+                info "  Controller $count: $name ($js)"
+            else
+                info "  Controller $count: Unknown ($js)"
+            fi
+            ((count++))
+        fi
+    done
+
+    # Also check lsusb for known controller USB vendor IDs
+    if command -v lsusb &>/dev/null; then
+        local known_ids=(
+            "054c"  # Sony (DualShock, DualSense)
+            "045e"  # Microsoft (Xbox controllers)
+            "057e"  # Nintendo (Switch Pro, Joy-Con)
+            "28de"  # Valve (Steam Controller)
+            "2dc8"  # 8BitDo
+            "0079"  # DragonRise (cheap USB gamepads)
+            "0583"  # Padix (retro USB adapters)
+            "0810"  # Personal Communication Systems (retro adapters)
+        )
+        for vid in "${known_ids[@]}"; do
+            local match
+            match=$(lsusb 2>/dev/null | grep -i "ID ${vid}:" || true)
+            if [[ -n "$match" ]]; then
+                info "  USB controller detected: $match"
+            fi
+        done
+    fi
+
+    if [[ $count -eq 0 ]]; then
+        warn "No joystick devices found. Controllers optional but recommended."
+    else
+        info "$count controller(s) detected"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Dependencies
 # ---------------------------------------------------------------------------
 
@@ -85,13 +179,23 @@ install_files() {
 
     cp "$script_dir/rustchain_miner.py" "$INSTALL_DIR/"
     cp "$script_dir/achievement_bridge.py" "$INSTALL_DIR/"
+    cp "$script_dir/proof_of_play.py" "$INSTALL_DIR/"
+    cp "$script_dir/cartridge_wallet.py" "$INSTALL_DIR/"
+    cp "$script_dir/community_events.py" "$INSTALL_DIR/"
     cp "$script_dir/config.json" "$INSTALL_DIR/"
 
     chmod +x "$INSTALL_DIR/rustchain_miner.py"
     chmod +x "$INSTALL_DIR/achievement_bridge.py"
+    chmod +x "$INSTALL_DIR/proof_of_play.py"
+    chmod +x "$INSTALL_DIR/cartridge_wallet.py"
+    chmod +x "$INSTALL_DIR/community_events.py"
 
-    # State directory (user-writable)
+    # State directory structure
     mkdir -p "$STATE_DIR"
+    mkdir -p "$STATE_DIR/sessions"
+    mkdir -p "$STATE_DIR/cartridges"
+    mkdir -p "$STATE_DIR/events"
+
     info "Files installed"
 }
 
@@ -201,15 +305,38 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
+    # Proof of Play session tracker service
+    cat > /etc/systemd/system/sophia-proof-of-play.service <<EOF
+[Unit]
+Description=Sophia Edge Node - Proof of Play Session Tracker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=$INSTALL_DIR/env
+ExecStart=$INSTALL_DIR/venv/bin/python3 $INSTALL_DIR/proof_of_play.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
     systemctl daemon-reload
     systemctl enable sophia-miner.service
 
-    # Only enable achievements if configured
+    # Only enable achievements + proof-of-play if RetroAchievements configured
     if python3 -c "import json; c=json.load(open('$INSTALL_DIR/config.json')); exit(0 if c.get('achievements',{}).get('enabled') else 1)" 2>/dev/null; then
         systemctl enable sophia-achievements.service
+        systemctl enable sophia-proof-of-play.service
         info "Achievement bridge enabled"
+        info "Proof of Play tracker enabled"
     else
         info "Achievement bridge disabled (no RetroAchievements credentials)"
+        info "Proof of Play tracker disabled (requires RetroAchievements)"
     fi
 
     info "Systemd services installed"
@@ -232,10 +359,16 @@ start_services() {
             systemctl start sophia-achievements.service
             info "Achievement bridge started"
         fi
+
+        if systemctl is-enabled sophia-proof-of-play.service &>/dev/null; then
+            systemctl start sophia-proof-of-play.service
+            info "Proof of Play tracker started"
+        fi
     else
         info "Services installed but not started. Use:"
         info "  sudo systemctl start sophia-miner"
         info "  sudo systemctl start sophia-achievements"
+        info "  sudo systemctl start sophia-proof-of-play"
     fi
 }
 
@@ -251,14 +384,26 @@ show_summary() {
     echo "  State dir:    $STATE_DIR"
     echo "  Config:       $INSTALL_DIR/config.json"
     echo ""
+    echo "  Cartridge wallet: $STATE_DIR/cartridges/"
+    echo "  Session history:  $STATE_DIR/sessions/"
+    echo "  Event data:       $STATE_DIR/events/"
+    echo ""
     echo "  Manage services:"
     echo "    sudo systemctl status sophia-miner"
     echo "    sudo systemctl status sophia-achievements"
+    echo "    sudo systemctl status sophia-proof-of-play"
     echo "    sudo journalctl -u sophia-miner -f"
     echo "    sudo journalctl -u sophia-achievements -f"
+    echo "    sudo journalctl -u sophia-proof-of-play -f"
+    echo ""
+    echo "  View your collection:"
+    echo "    python3 $INSTALL_DIR/cartridge_wallet.py --list"
+    echo "    python3 $INSTALL_DIR/community_events.py --events"
     echo ""
     echo "  RustChain:    https://rustchain.org"
     echo "  BoTTube:      https://bottube.ai"
+    echo ""
+    echo "  Small RTC, huge bragging rights."
     echo ""
 }
 
@@ -271,11 +416,14 @@ main() {
     echo "  ╔═══════════════════════════════════════╗"
     echo "  ║  Sophia Edge Node Installer           ║"
     echo "  ║  Mine RTC + Earn Retro Game Rewards   ║"
+    echo "  ║  Small RTC, huge bragging rights.     ║"
     echo "  ╚═══════════════════════════════════════╝"
     echo ""
 
     require_root
     detect_hardware
+    detect_retroarch
+    detect_controllers
     install_deps
     install_files
     setup_venv
