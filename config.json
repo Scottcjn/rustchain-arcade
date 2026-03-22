@@ -1,0 +1,36 @@
+{
+  "node_id": "sophia-edge-rpi",
+  "rustchain": {
+    "node_url": "https://50.28.86.131",
+    "node_port": 443,
+    "verify_ssl": false
+  },
+  "mining": {
+    "enabled": true,
+    "interval_seconds": 600,
+    "arm_weight": 0.0005
+  },
+  "achievements": {
+    "enabled": true,
+    "poll_interval_seconds": 300,
+    "daily_cap_rtc": 0.05,
+    "retroachievements": {
+      "api_url": "https://retroachievements.org/API",
+      "username": "",
+      "api_key": ""
+    },
+    "reward_tiers": {
+      "common": {"min_points": 1, "max_points": 5, "rtc": 0.00005},
+      "uncommon": {"min_points": 5, "max_points": 10, "rtc": 0.0002},
+      "rare": {"min_points": 10, "max_points": 25, "rtc": 0.0005},
+      "ultra_rare": {"min_points": 25, "max_points": 50, "rtc": 0.001},
+      "legendary": {"min_points": 50, "max_points": 100, "rtc": 0.005},
+      "mastery_bonus": 0.01
+    },
+    "hardcore_multiplier": 2.0
+  },
+  "discord": {
+    "enabled": false,
+    "webhook_url": ""
+  }
+}
