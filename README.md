@@ -1,5 +1,7 @@
 # RustChain Arcade
 
+[![RustChain Contributor](https://img.shields.io/badge/RustChain-Contributor-blue)](https://github.com/Scottcjn/Rustchain)
+
 **Small RTC, huge bragging rights.**
 
 Mine RTC while playing retro games on your Raspberry Pi. A lightweight edge node for the [RustChain](https://rustchain.org) network that combines hardware attestation mining with [RetroAchievements](https://retroachievements.org) reward integration. Earn RTC tokens for unlocking achievements in classic games -- with rarity-weighted scoring, proof-of-play session boosts, and soulbound cartridge relics for mastered games.
